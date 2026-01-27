@@ -1,0 +1,18 @@
+name: "lfi-bind"
+description:
+    "This program makes it easy to do library sandboxing with LFI. It generates "
+    "routines to initialize the library sandbox, and trampolines for calling "
+    "functions from the library."
+
+third_party {
+homepage: "https://github.com/lfi-project/lfi-bind"
+  identifier {
+    type: "Git"
+    value: "https://github.com/lfi-project/lfi-bind"
+    primary_source: true
+    version: "899ae9e4aad6d0e16415fc61be34453377baf6ce"
+  }
+  version: "899ae9e4aad6d0e16415fc61be34453377baf6ce"
+  last_upgrade_date { year: 2025 month: 11 day: 13 }
+  license_type: NOTICE
+}

@@ -1,0 +1,13 @@
+.cache
+lfi-bind
+*.lfi
+*.so
+*.out
+main
+gen
+examples/lfi-runtime
+*.a
+
+subprojects/lfi-runtime
+subprojects/lfi-verifier*
+subprojects/argtable3

@@ -1,0 +1,367 @@
+#include "lfi_linux.h"
+#include "lfi_arch.h"
+
+#include <assert.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <setjmp.h>
+#include <sys/mman.h>
+
+#define LOG_TAG "lfi-{{.lib}}"
+
+#if 0 && defined(__ANDROID__)
+
+#include <android/log.h>
+
+#define LOG(...) \
+    ((void) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__))
+
+#else
+
+#define LOG(fmt, ...) \
+    fprintf(stderr, "[" LOG_TAG "] " fmt "\n", ##__VA_ARGS__)
+
+#endif
+
+#define ERROR(...)        \
+    do {                  \
+        LOG(__VA_ARGS__); \
+        abort();          \
+    } while (0)
+
+#define LINUX_RTLD_NOW 2
+
+_Thread_local struct LFIContext *{{.lib}}_ctx;
+
+struct LFIBox *{{.lib}}_box;
+
+static const char *library_file = "{{.lib_path}}";
+
+void *
+{{.lib}}_malloc(size_t size)
+{
+    return lfi_lib_malloc({{.lib}}_box, &{{.lib}}_ctx, size);
+}
+
+void *
+{{.lib}}_realloc(size_t size)
+{
+    return lfi_lib_realloc({{.lib}}_box, &{{.lib}}_ctx, size);
+}
+
+void *
+{{.lib}}_calloc(size_t count, size_t size)
+{
+    return lfi_lib_calloc({{.lib}}_box, &{{.lib}}_ctx, count, size);
+}
+
+void
+{{.lib}}_free(void *p)
+{
+    return lfi_lib_free({{.lib}}_box, &{{.lib}}_ctx, p);
+}
+
+void *
+{{.lib}}_register_cb(void *fn)
+{
+    return lfi_box_register_cb({{.lib}}_box, fn);
+}
+
+void
+{{.lib}}_unregister_cb(void *fn)
+{
+    lfi_box_unregister_cb({{.lib}}_box, fn);
+}
+
+#ifdef LFI_ARCH_X64
+#define REG_SP rsp
+#else
+#define REG_SP sp
+#endif
+
+void *
+{{.lib}}_stack_push(size_t size)
+{
+    struct LFIRegs *regs = lfi_ctx_regs({{.lib}}_ctx);
+    lfiptr sp = regs->REG_SP;
+    regs->REG_SP = sp - size;
+    return (void *) lfi_box_l2p({{.lib}}_box, sp);
+}
+
+void *
+{{.lib}}_stack_pop(size_t size)
+{
+    struct LFIRegs *regs = lfi_ctx_regs({{.lib}}_ctx);
+    regs->REG_SP = regs->REG_SP + size;
+    return (void *) lfi_box_l2p({{.lib}}_box, regs->REG_SP);
+}
+
+void *
+{{.lib}}_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t off)
+{
+    struct LFIBox *box = {{.lib}}_box;
+    if ((flags & LFI_MAP_FIXED) == 0) {
+        return (void *) lfi_box_l2p(box, lfi_box_mapany(box, length, prot, flags, fd, off));
+    } else {
+        lfiptr box_addr = lfi_box_p2l(box, (uintptr_t) addr);
+        return (void *) lfi_box_l2p(box, lfi_box_mapat(box, box_addr, length, prot, flags, fd, off));
+    }
+}
+
+int
+{{.lib}}_mprotect(void *addr, size_t length, int prot)
+{
+    struct LFIBox *box = {{.lib}}_box;
+    return lfi_box_mprotect(box, lfi_box_p2l(box, (uintptr_t) addr), length, prot);
+}
+
+int
+{{.lib}}_munmap(void *addr, size_t length)
+{
+    struct LFIBox *box = {{.lib}}_box;
+    return lfi_box_munmap(box, lfi_box_p2l(box, (uintptr_t) addr), length);
+}
+
+{{if not .dynamic}}
+static void
+resolve(struct LFILinuxProc *proc, lfiptr *loc, const char *name)
+{
+    lfiptr addr = lfi_proc_sym(proc, name);
+    if (addr == 0)
+        LOG("error: symbol not found: %s", name);
+    *loc = addr;
+}
+{{end}}
+
+struct Buf {
+    void *data;
+    size_t size;
+    const char *name;
+};
+
+{{if .embed}}
+
+static const uint8_t embed_data[];
+static const size_t embed_size;
+
+{{else}}
+
+static bool
+exists(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        return false;
+    }
+    fclose(f);
+    return true;
+}
+
+static char *
+getfilepath(const char *path)
+{
+    // Try reading the file directly.
+    if (exists(path))
+        return strndup(path, FILENAME_MAX);
+
+    // Try searching for it on the LFI_LIBRARY_PATH.
+    const char* env_path = getenv("LFI_LIBRARY_PATH");
+    if (env_path == NULL)
+        return NULL;
+
+    char *lfi_path = strndup(env_path, FILENAME_MAX);
+    if (lfi_path == NULL)
+        return NULL;
+
+    char *saveptr;
+    char *token = strtok_r(lfi_path, ":", &saveptr);
+    while (token != NULL) {
+        char full_path[FILENAME_MAX];
+        snprintf(full_path, sizeof(full_path), "%s/%s", token, path);
+
+        if (exists(full_path)) {
+            free(lfi_path);
+            return strndup(full_path, FILENAME_MAX);
+        }
+
+        token = strtok_r(NULL, ":", &saveptr);
+    }
+
+    free(lfi_path);
+    return NULL;
+}
+
+{{end}}
+
+{{if .dynamic}}
+static char cwd[FILENAME_MAX];
+
+static const char *all[] = {
+    "/=/",
+    NULL,
+};
+{{end}}
+
+static void
+lfi_init(void)
+{
+{{if .dynamic}}
+    char *p = getcwd(cwd, sizeof(cwd));
+    if (p != cwd)
+        ERROR("error: failed to read cwd");
+{{end}}
+
+    // Create engine if it does not exist.
+    bool ok = lfi_linux_lib_init((struct LFIOptions) {
+        .boxsize = 4UL * 1024 * 1024 * 1024,
+        .pagesize = getpagesize(),
+        .verbose = false,
+{{if .no_verify}}
+        .no_verify = true,
+{{end}}
+    }, (struct LFILinuxOptions) {
+        .stacksize = 2UL * 1024 * 1024,
+        .verbose = false,
+{{if .dynamic}}
+        // TODO: don't allow complete file system access if dynamic...
+        .dir_maps = all,
+        .wd = cwd,
+{{end}}
+    });
+    if (!ok)
+        ERROR("error: failed to initialize liblfi");
+}
+
+static void
+init(void)
+{
+    lfi_init();
+
+    struct LFILinuxProc *proc = lfi_proc_new(lfi_linux_lib_engine());
+    if (!proc)
+        ERROR("error: failed to create LFI proc");
+
+{{if .embed}}
+    bool ok = lfi_proc_load(proc, embed_data, embed_size, library_file);
+{{else}}
+// Create proc from file.
+ {{if .dynamic}}
+    const char *exe_file = "boxrt.lfi";
+ {{else}}
+    const char *exe_file = library_file;
+ {{end}}
+    const char *prog_path = getfilepath(exe_file);
+    if (!prog_path)
+        ERROR("error: could not find %s", exe_file);
+    bool ok = lfi_proc_load_file(proc, prog_path);
+{{end}}
+
+    if (!ok)
+        ERROR("error: failed to load LFI library");
+
+    // Initialize return.
+    lfiptr lfi_ret = lfi_proc_sym(proc, "_lfi_ret");
+    if (!lfi_ret)
+        ERROR("error: LFI library does not have _lfi_ret symbol");
+    lfi_box_register_ret(lfi_proc_box(proc), lfi_ret);
+
+    // Create and run thread.
+    const char *argv[] = {
+        "{{.lib}}",
+        NULL,
+    };
+
+    const char *envp[] = {
+        NULL,
+    };
+
+    struct LFILinuxThread *t = lfi_thread_new(proc,
+        sizeof(argv)/sizeof(argv[0]), &argv[0], &envp[0]);
+    if (!t)
+        ERROR("failed to initialize LFI thread");
+    int result = lfi_thread_run(t);
+    if (result != 0)
+        ERROR("LFI thread returned non-zero value: %d", result);
+
+    // Initialize clone.
+    lfi_linux_init_clone(t);
+
+    struct LFIBox *box = lfi_proc_box(proc);
+
+    {{.lib}}_box = box;
+    {{.lib}}_ctx = *lfi_thread_ctxp(t);
+
+{{if .dynamic}}
+
+    size_t len = strlen(library_file) + 1;
+    void *sbx_library_file = {{.lib}}_malloc(len);
+    if (!sbx_library_file)
+        ERROR("error: could not allocate library name in sandbox");
+    memcpy(sbx_library_file, library_file, len);
+
+    // Inject dlopen call.
+    lfiptr handle = LFI_INVOKE(box, lfi_thread_ctxp(t),
+            lfi_proc_sym(proc, "_lfi_dlopen"), lfiptr, (void *, int),
+            sbx_library_file, LINUX_RTLD_NOW);
+    if (!handle)
+        ERROR("error: dlopen could not load %s", library_file);
+    if (!lfi_box_ptrvalid(box, handle))
+        ERROR("error: dlopen returned invalid pointer");
+    {{.lib}}_free(sbx_library_file);
+
+    // Inject dlsym calls.
+    lfiptr dlsym = lfi_proc_sym(proc, "_lfi_dlsym");
+ {{- range $sym := .syms}}
+    size_t sym_len = sizeof("{{$sym}}");
+    void *sbx_sym = {{$.lib}}_malloc(sym_len);
+    if (!sbx_sym)
+        ERROR("error: could not allocate symbol name in sandbox");
+    memcpy(sbx_sym, "{{$sym}}", sym_len);
+
+    extern lfiptr {{$.lib}}_addr_{{$sym}};
+    lfiptr sym = LFI_INVOKE(box, lfi_thread_ctxp(t),
+            dlsym, lfiptr, (lfiptr, void *), handle, sbx_sym);
+    if (sym == 0)
+        LOG("error: symbol not found: {{$sym}}");
+    {{$.lib}}_addr_{{$sym}} = sym;
+    {{$.lib}}_free(sbx_sym);
+ {{- end}}
+
+{{else}}
+
+    // Initialize all exported symbols.
+ {{- range $sym := .syms}}
+    extern lfiptr {{$.lib}}_addr_{{$sym}};
+    resolve(proc, &{{$.lib}}_addr_{{$sym}}, "{{$sym}}");
+ {{- end}}
+
+{{end}}
+}
+
+__attribute__((constructor)) void
+{{.lib}}_init(void)
+{
+    init();
+}
+
+static void
+setjmp_callback(void *env, int v)
+{
+    longjmp(env, v);
+}
+
+void
+{{.lib}}_setjmp(jmp_buf env, void *lfi_env)
+{
+    void *box_cb = {{.lib}}_register_cb(setjmp_callback);
+    assert(box_cb);
+    lfi_lib_setjmp({{.lib}}_box, &{{.lib}}_ctx, lfi_env, env, box_cb);
+}
+
+{{if .embed}}
+static const uint8_t embed_data[] = {
+    {{.embed_data}}
+};
+static const size_t embed_size = sizeof(embed_data);
+{{end}}

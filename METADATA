@@ -1,18 +1,21 @@
-name: "lfi-bind"
-description:
-    "This program makes it easy to do library sandboxing with LFI. It generates "
-    "routines to initialize the library sandbox, and trampolines for calling "
-    "functions from the library."
+# This project was upgraded with external_updater.
+# Usage: tools/external_updater/updater.sh update external/lfi/lfi-bind
+# For more info, check https://cs.android.com/android/platform/superproject/main/+/main:tools/external_updater/README.md
 
+name: "lfi-bind"
+description: "This program makes it easy to do library sandboxing with LFI. It generates routines to initialize the library sandbox, and trampolines for calling functions from the library."
 third_party {
-homepage: "https://github.com/lfi-project/lfi-bind"
+  license_type: NOTICE
+  last_upgrade_date {
+    year: 2026
+    month: 2
+    day: 10
+  }
+  homepage: "https://github.com/lfi-project/lfi-bind"
   identifier {
     type: "Git"
     value: "https://github.com/lfi-project/lfi-bind"
+    version: "65dbc8143c392367560650386e44c408ae5335a3"
     primary_source: true
-    version: "899ae9e4aad6d0e16415fc61be34453377baf6ce"
   }
-  version: "899ae9e4aad6d0e16415fc61be34453377baf6ce"
-  last_upgrade_date { year: 2025 month: 11 day: 13 }
-  license_type: NOTICE
 }

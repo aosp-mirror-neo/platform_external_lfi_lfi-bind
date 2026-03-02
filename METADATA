@@ -8,14 +8,14 @@ third_party {
   license_type: NOTICE
   last_upgrade_date {
     year: 2026
-    month: 2
-    day: 10
+    month: 3
+    day: 2
   }
   homepage: "https://github.com/lfi-project/lfi-bind"
   identifier {
     type: "Git"
     value: "https://github.com/lfi-project/lfi-bind"
-    version: "65dbc8143c392367560650386e44c408ae5335a3"
+    version: "a706efe8bff929c4b7e62234d91b29b2959ec524"
     primary_source: true
   }
 }

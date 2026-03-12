@@ -138,15 +138,18 @@ func ExecTemplate(w io.Writer, name string, data string, vars map[string]any, fu
 }
 
 type Options struct {
-	Input     string
-	Syms      []string
-	Lib       string
-	LibPrefix string
-	LibPath   string
-	Dynamic   bool
-	Embed     bool
-	NoVerify  bool
-	StackArgs map[string]StackArgInfo
+	Input       string
+	Syms        []string
+	Lib         string
+	LibPrefix   string
+	LibPath     string
+	Dynamic     bool
+	Embed       bool
+	NoVerify    bool
+	Constructor    bool
+	Verbose        bool
+	NoSigaltstack  bool
+	StackArgs   map[string]StackArgInfo
 }
 
 // Returns sret, nstack.
@@ -233,13 +236,16 @@ func GenInit(file string, opts Options) {
 	}
 
 	ExecTemplate(w, file, embedLibInitC, map[string]any{
-		"lib":        opts.Lib,
-		"lib_path":   opts.LibPath,
-		"syms":       opts.Syms,
-		"dynamic":    opts.Dynamic,
-		"no_verify":  opts.NoVerify,
-		"embed":      opts.Embed,
-		"embed_data": embedData,
+		"lib":         opts.Lib,
+		"lib_path":    opts.LibPath,
+		"syms":        opts.Syms,
+		"dynamic":     opts.Dynamic,
+		"no_verify":   opts.NoVerify,
+		"embed":       opts.Embed,
+		"embed_data":  embedData,
+		"constructor": opts.Constructor,
+		"verbose":         opts.Verbose,
+		"no_sigaltstack":  opts.NoSigaltstack,
 	}, nil)
 
 	w.Close()
@@ -271,6 +277,9 @@ func main() {
 	libPrefix := flag.String("lib-prefix", "", "prefix to put on library symbols")
 	embedF := flag.Bool("embed", false, "fully embed the input library into the data segment")
 	noVerify := flag.Bool("no-verify", false, "disable verification")
+	noConstructor := flag.Bool("no-constructor", false, "disable constructor for automatic initialization")
+	verbose := flag.Bool("verbose", false, "enable verbose logging")
+	noSigaltstack := flag.Bool("no-sigaltstack", false, "disable automatic sigaltstack initialization")
 
 	flag.Parse()
 
@@ -350,15 +359,18 @@ func main() {
 	f.Close()
 
 	opts := Options{
-		Input:     input,
-		Syms:      syms,
-		Lib:       *lib,
-		LibPrefix: *libPrefix,
-		LibPath:   *libPath,
-		Dynamic:   dynamic,
-		Embed:     *embedF,
-		NoVerify:  *noVerify,
-		StackArgs: stackArgs,
+		Input:       input,
+		Syms:        syms,
+		Lib:         *lib,
+		LibPrefix:   *libPrefix,
+		LibPath:     *libPath,
+		Dynamic:     dynamic,
+		Embed:       *embedF,
+		NoVerify:    *noVerify,
+		Constructor: !*noConstructor,
+		Verbose:       *verbose,
+		NoSigaltstack: *noSigaltstack,
+		StackArgs:   stackArgs,
 	}
 
 	if *genTrampolines != "" {

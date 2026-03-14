@@ -9,13 +9,13 @@ third_party {
   last_upgrade_date {
     year: 2026
     month: 3
-    day: 2
+    day: 12
   }
   homepage: "https://github.com/lfi-project/lfi-bind"
   identifier {
     type: "Git"
     value: "https://github.com/lfi-project/lfi-bind"
-    version: "a706efe8bff929c4b7e62234d91b29b2959ec524"
+    version: "f3b0da1c793b678468fe3c337ca5c24a30ef12fb"
     primary_source: true
   }
 }
